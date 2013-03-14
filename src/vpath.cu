@@ -11,7 +11,7 @@
 /////////////// GLOBAL VARIABLES //////////////////////////////////
 ///////////////////////////////////////////////////////////////////
 const int width = 600, height = 600;
-unsigned int *seeds, *d_seeds, samplesPerPixel = 0;
+unsigned int *seeds, samplesPerPixel = 0;
 struct Vec *image, *d_image;
 struct Sphere *spheres, *d_spheres, *d_homogeneousMedium;
 int nbSpheres;
@@ -197,7 +197,7 @@ __device__ inline float scatter(const Ray &r, Ray &sRay, float sigma_s, float &s
 	return 1.0f;
 }
 
-__global__ void rendering_kernel(Vec *d_image, int width, int height, Sphere *d_spheres, int nbSpheres, unsigned int *d_seeds, Sphere *d_homogeneousMedium, curandStateXORWOW_t *d_states) {
+__global__ void rendering_kernel(Vec *d_image, int width, int height, Sphere *d_spheres, int nbSpheres, Sphere *d_homogeneousMedium, curandStateXORWOW_t *d_states) {
 	int ix = threadIdx.x + blockIdx.x * blockDim.x;
 	int iy = threadIdx.y + blockIdx.y * blockDim.y;
 	if (ix >= width || iy >= height)
@@ -218,7 +218,7 @@ __global__ void rendering_kernel(Vec *d_image, int width, int height, Sphere *d_
 	Vec brdfsProduct = Vec(1.0f, 1.0f, 1.0f);
 	for (int depth = 0; depth < 200; ++depth) {
 		int id = 0;
-		float tt, t = 1e7f, t_m, tnear, tfar, tnear_m, tfar_m;
+		float t = 1e7f, t_m, tnear, tfar, tnear_m, tfar_m;
 		Vec absorption(1.0f, 1.0f, 1.0f);
 		bool intrsctmd = (t_m = d_homogeneousMedium->intersect(&r, &tnear_m, &tfar_m)) > 0.0f;
 		bool intrscts = intersect(&r, d_spheres, nbSpheres, t, id, 0.0f, 1e7f, &tnear, &tfar);
@@ -228,14 +228,14 @@ __global__ void rendering_kernel(Vec *d_image, int width, int height, Sphere *d_
 		if (intrscts && (d_spheres[id].refl == REFR || (d_spheres[id].refl & VOL) == VOL) && (r.o + r.d * t - d_spheres[id].p).dot(r.d) >= 0.0f)
 			doAtmosphericScattering = false;
 		Sphere *obj = &d_spheres[id];
-		tt = t;
+		float nearestDist = t;
 		if (doAtmosphericScattering) {
 			obj = d_homogeneousMedium;
 			tnear = tnear_m;
 			tfar = tfar_m;
-			tt = t_m;
+			nearestDist = t_m;
 		}
-		if ((obj->refl & VOL) == VOL && (r.o + r.d * tt - obj->p).dot(r.d) >= 0.0f) {
+		if ((obj->refl & VOL) == VOL && (r.o + r.d * nearestDist - obj->p).dot(r.d) >= 0.0f) {
 			Ray sRay;
 			float e0 = curand_uniform(&state), e1 = curand_uniform(&state), e2 = curand_uniform(&state);
 			const VolumetricProps &volProps = obj->volProps;
@@ -250,14 +250,14 @@ __global__ void rendering_kernel(Vec *d_image, int width, int height, Sphere *d_
 			// Ray is probably leaving the medium
 			if (intrscts && t <= tfar) {
 				obj = &d_spheres[id];
-				tt = t;
+				nearestDist = t;
 			}
-			if (tt >= tnear) {
-				float dist = (tt >= tfar ? tfar - tnear : tt - tnear); 
+			if (nearestDist >= tnear) {
+				float dist = (nearestDist >= tfar ? tfar - tnear : nearestDist - tnear); 
 				absorption = Vec(1.0f, 1.0f, 1.0f) + volProps.absorptionColor * (expf(-volProps.sigma_t * dist) - 1.0f);
 			}
 		}
-		Vec d, x = r.o + r.d * tt, n = (x - obj->p).norm(), nl = n.dot(r.d) < 0 ? n : n * -1.0f, f = obj->c.mult(absorption), Le = obj->e.mult(absorption);
+		Vec d, x = r.o + r.d * nearestDist, n = (x - obj->p).norm(), nl = n.dot(r.d) < 0 ? n : n * -1.0f, f = obj->c.mult(absorption), Le = obj->e.mult(absorption);
 		if ((obj->refl & DIFF) == DIFF) {		// Ideal DIFFUSE reflection
 			float rnx = curand_uniform(&state);
 			float rny = curand_uniform(&state);
@@ -299,20 +299,13 @@ __global__ void rendering_kernel(Vec *d_image, int width, int height, Sphere *d_
 }
 
 void render(Vec *image, int width, int height, Sphere *spheres, int nbSpheres, Sphere *d_homogeneousMedium) {
-	// Update the seed array
-	/*
-	for (int i = 0; i < width * height; ++i)
-		seeds[i] = XORShift::frand();
-
-	cudaMemcpy(d_seeds, seeds, sizeof(unsigned int) * width * height, cudaMemcpyHostToDevice);
-	*/
 	int nbbx = (width + NB_THREADS_X - 1) / NB_THREADS_X;
 	int nbby = (height + NB_THREADS_X - 1) / NB_THREADS_X;
 	dim3 nbBlocks(nbbx,nbby);
 	//printf("number of blocks per dimension %d\n", nbb);
 	dim3 threadsPerBlock(NB_THREADS_X, NB_THREADS_X);
 	cudaMemset(d_image, 0, sizeof(Vec) * width * height);
-	rendering_kernel<<<nbBlocks, threadsPerBlock>>>(d_image, width, height, d_spheres, nbSpheres, d_seeds, d_homogeneousMedium, d_states);
+	rendering_kernel<<<nbBlocks, threadsPerBlock>>>(d_image, width, height, d_spheres, nbSpheres, d_homogeneousMedium, d_states);
 
 	Vec *h_tmp_image = new Vec[width * height];
 	// Copy rendered image back to host memory
@@ -331,7 +324,7 @@ void initEngine() {
 	image = new Vec[width * height];
 	Sphere tmpSpheres[] = {//Scene: radius, position, emission, color, material 
 		Sphere(0.5f, Vec(0.0f, 4.0f, -24.0f), Vec(2.0f, 2.0f, 2.0f) * 10.0f, Vec(), DIFF), // Light source 
-		Sphere(2.0f, Vec(2.0f, 1.0f, -25.0f), Vec(), Vec(1, 1, 1) * 0.8f, Refl_t(REFR | VOL), VolumetricProps(Vec(1.0, 1.0, 1.0), Vec(0.0f, 0.2f, 0.9f), 4.0f, 1.1f), 1.33f),
+		Sphere(2.0f, Vec(2.0f, 1.0f, -25.0f), Vec(), Vec(1, 1, 1) * 0.8f, Refl_t(REFR | VOL), VolumetricProps(Vec(1.0, 1.0, 1.0), Vec(0.0f, 0.2f, 0.9f), 4.0f, 3.1f), 1.33f),
 		Sphere(2.0f, Vec(-2.0f, 1.0f, -25.0f), Vec(), Vec(1, 1, 1) * 0.8f, Refl_t(REFR | VOL), VolumetricProps(Vec(1.0, 1.0, 1.0), Vec(0.9f, 0.2f, 0.9f), 4.0f, 0.1f), 1.33f),
 		Sphere(1000.0f, Vec(0.0f, -1001.0f, -25.0f), Vec(), Vec(1, 1, 1) * 0.8f, DIFF),
 	};
@@ -344,7 +337,7 @@ void initEngine() {
 	nbSpheres = sizeof(tmpSpheres) / sizeof(Sphere);
 	spheres = new Sphere[nbSpheres];
 	memcpy(spheres, tmpSpheres, sizeof(tmpSpheres));
-	
+	unsigned int *d_seeds;
 	// Initialize gpu stuff
 	cudaMalloc(&d_seeds, sizeof(unsigned int) * width * height);
 	CHECK_CUDA_ERRORS(cudaMalloc(&d_image, sizeof(Vec) * width * height));
@@ -360,8 +353,10 @@ void initEngine() {
 	cudaMemcpy(d_seeds, seeds, sizeof(unsigned int) * width * height, cudaMemcpyHostToDevice);
 
 	cudaMalloc(&d_states, sizeof(curandStateXORWOW_t) * nbBlocks.x * nbBlocks.y * NB_THREADS_X * NB_THREADS_X);
-	
 	initCurandStates<<<nbBlocks, threadsPerBlock>>>(d_seeds, d_states, width, height);
+
+	CHECK_CUDA_ERRORS(cudaFree(d_seeds));
+	delete[] seeds;
 
 	// Allocate and copy scene geometry to the device
 	CHECK_CUDA_ERRORS(cudaMalloc((void**)&d_spheres, sizeof(Sphere) * nbSpheres));
@@ -395,12 +390,10 @@ void initEngine() {
 void shutdownEngine() {
 	// Free any allocated memory
 	delete[] spheres;
-	delete[] seeds;
 	delete[] image;
 	CHECK_CUDA_ERRORS(cudaFree(d_spheres));
 	CHECK_CUDA_ERRORS(cudaFree(d_homogeneousMedium));
 	CHECK_CUDA_ERRORS(cudaFree(d_image));
-	CHECK_CUDA_ERRORS(cudaFree(d_seeds));
 	CHECK_CUDA_ERRORS(cudaFree(d_states));
 }
 
