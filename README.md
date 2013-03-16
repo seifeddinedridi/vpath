@@ -18,6 +18,7 @@ Renders:
 <p align="center">
 <img src="https://github.com/D-POWER/vpath/blob/master/renders/sss-spheres.png?raw=true"/>
 <img src="https://github.com/D-POWER/vpath/blob/master/renders/image192605.png?raw=true"/>
+<img src="https://github.com/D-POWER/vpath/blob/master/renders/image55286.png?raw=true"/>
 </p>
 
 <b>[WARNING]</b> This project is meant as an experimental playground to test my ideas on volumetric rendering, so bear in mind that the code may contain bugs or present malfunction.
