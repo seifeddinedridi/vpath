@@ -20,4 +20,4 @@ Renders:
 <img src="https://github.com/D-POWER/vpath/blob/master/renders/image192605.png?raw=true"/>
 </p>
 
-<b>[WARNING]</b> This project is meant as an experimental playground to test my ideas on volumetric rendering, so bare in mind that the code may contain bugs or present malfunction.
+<b>[WARNING]</b> This project is meant as an experimental playground to test my ideas on volumetric rendering, so bear in mind that the code may contain bugs or present malfunction.
