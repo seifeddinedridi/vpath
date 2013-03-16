@@ -142,16 +142,12 @@ struct Sphere {
 	}
 };
 
-__device__ bool intersect(const Ray *r, const Sphere *d_spheres, int nbSpheres, float &t, int &id, float tmin, float tmax, float *tin, float *tout) {
-	float d, inf = t = tmax, tnear, tfar;
+__device__ bool intersect(const Ray *r, const Sphere *d_spheres, int nbSpheres, float &t, int &id) {
+	float d, inf = t = 1e7f, tnear, tfar;
 	for(int i = nbSpheres; i--;) 
-		if((d = d_spheres[i].intersect(r, &tnear, &tfar)) && (d < t) && (d > tmin)) {
+		if((d = d_spheres[i].intersect(r, &tnear, &tfar)) && (d < t)) {
 			t=d;
 			id=i;
-			if (tin && tout) {
-				*tin = tnear;
-				*tout = tfar;
-			}
 		}
 	return t < inf;
 }
@@ -183,17 +179,15 @@ __device__ inline void generateOrthoBasis(Vec &u, Vec &v, Vec w) {
 	u = w%coVec,
 	v = w%u;
 }
-__device__ inline float scatter(const Ray &r, Ray &sRay, float sigma_s, float &s, float tin, float tout, float e0, float e1, float e2) {
+__device__ inline float scatter(const Ray &r, Ray &sRay, float sigma_s, float &s, float e0, float e1, float e2) {
 	s = sampleSegment(e0, sigma_s);
-	//s = sampleSegment(e0, sigma_s, tout - tin);
-	Vec x = r.o + r.d * tin + r.d * s;
+	Vec x = r.o + r.d * s;
 	//Vec dir = sampleSphere(e1, e2); //Sample a direction ~ uniform phase function
 	Vec dir = sampleHG(-0.0f, e1, e2); //Sample a direction ~ Henyey-Greenstein's phase function
 	Vec u,v;
 	generateOrthoBasis(u, v, r.d);
 	dir = u * dir.x + v * dir.y + r.d * dir.z;
 	sRay = Ray(x, dir);
-	//return (1.0 - expf(-sigma_s * (tout - tin)));
 	return 1.0f;
 }
 
@@ -216,48 +210,46 @@ __global__ void rendering_kernel(Vec *d_image, int width, int height, Sphere *d_
 	Ray r(cam.o, d.norm());
 	Vec pathThroughput;
 	Vec brdfsProduct = Vec(1.0f, 1.0f, 1.0f);
-	for (int depth = 0; depth < 200; ++depth) {
+	for (int depth = 0; depth < 50; ++depth) {
 		int id = 0;
-		float t = 1e7f, t_m, tnear, tfar, tnear_m, tfar_m;
+		float t_s, t_m, tnear_m, tfar_m;
 		Vec absorption(1.0f, 1.0f, 1.0f);
 		bool intrsctmd = (t_m = d_homogeneousMedium->intersect(&r, &tnear_m, &tfar_m)) > 0.0f;
-		bool intrscts = intersect(&r, d_spheres, nbSpheres, t, id, 0.0f, 1e7f, &tnear, &tfar);
+		bool intrscts = intersect(&r, d_spheres, nbSpheres, t_s, id);
 		if (!intrscts && !intrsctmd)
 			break;
-		bool doAtmosphericScattering = (intrsctmd && (!intrscts || (t_m <= t || (t >= tnear_m && t <= tfar_m))));
-		if (intrscts && (d_spheres[id].refl == REFR || (d_spheres[id].refl & VOL) == VOL) && (r.o + r.d * t - d_spheres[id].p).dot(r.d) >= 0.0f)
+		bool doAtmosphericScattering = (intrsctmd && (!intrscts || (t_m <= t_s || (t_s >= tnear_m && t_s <= tfar_m))));
+		if (intrscts && (d_spheres[id].refl == REFR || (d_spheres[id].refl & VOL) == VOL) && (r.o + r.d * t_s - d_spheres[id].p).dot(r.d) >= 0.0f)
 			doAtmosphericScattering = false;
 		Sphere *obj = &d_spheres[id];
-		float nearestDist = t;
+		float t = t_s;
 		if (doAtmosphericScattering) {
 			obj = d_homogeneousMedium;
-			tnear = tnear_m;
-			tfar = tfar_m;
-			nearestDist = t_m;
+			t = t_m;
 		}
-		if ((obj->refl & VOL) == VOL && (r.o + r.d * nearestDist - obj->p).dot(r.d) >= 0.0f) {
+		if ((obj->refl & VOL) == VOL && (r.o + r.d * t - obj->p).dot(r.d) >= 0.0f) {
 			Ray sRay;
 			float e0 = curand_uniform(&state), e1 = curand_uniform(&state), e2 = curand_uniform(&state);
 			const VolumetricProps &volProps = obj->volProps;
-			float s, ms = /*(volProps.sigma_s / volProps.sigma_t) */ scatter(r, sRay, volProps.sigma_s, s, tnear, tfar, e0, e1, e2);
-			if ((s <= (tfar - tnear) && (s + tnear) <= t) && volProps.sigma_s > 0) { 
+			float s, ms = /*(volProps.sigma_s / volProps.sigma_t) */ scatter(r, sRay, volProps.sigma_s, s, e0, e1, e2);
+			float distToExit = t_s < t_m ? t_s : t_m;
+			if (s <= distToExit && volProps.sigma_s > 0) { 
 				r = sRay;
 				brdfsProduct = brdfsProduct.mult(volProps.scatteringColor * ms);
 				absorption = Vec(1.0f, 1.0f, 1.0f) + volProps.absorptionColor * (expf(-volProps.sigma_a * s) - 1.0f);
 				brdfsProduct = brdfsProduct.mult(absorption);
 				continue;
 			}
+			float dist = t_m;
 			// Ray is probably leaving the medium
-			if (intrscts && t <= tfar) {
+			if (intrscts && t_s <= t) {
 				obj = &d_spheres[id];
-				nearestDist = t;
+				t = t_s;
+				dist = t_s;
 			}
-			if (nearestDist >= tnear) {
-				float dist = (nearestDist >= tfar ? tfar - tnear : nearestDist - tnear); 
-				absorption = Vec(1.0f, 1.0f, 1.0f) + volProps.absorptionColor * (expf(-volProps.sigma_t * dist) - 1.0f);
-			}
+			absorption = Vec(1.0f, 1.0f, 1.0f) + volProps.absorptionColor * (expf(-volProps.sigma_t * dist) - 1.0f);
 		}
-		Vec d, x = r.o + r.d * nearestDist, n = (x - obj->p).norm(), nl = n.dot(r.d) < 0 ? n : n * -1.0f, f = obj->c.mult(absorption), Le = obj->e.mult(absorption);
+		Vec d, x = r.o + r.d * t, n = (x - obj->p).norm(), nl = n.dot(r.d) < 0 ? n : n * -1.0f, f = obj->c.mult(absorption), Le = obj->e.mult(absorption);
 		if ((obj->refl & DIFF) == DIFF) {		// Ideal DIFFUSE reflection
 			float rnx = curand_uniform(&state);
 			float rny = curand_uniform(&state);
