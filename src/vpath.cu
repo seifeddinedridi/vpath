@@ -212,7 +212,7 @@ __global__ void rendering_kernel(Vec *d_image, int width, int height, Sphere *d_
 	Vec brdfsProduct = Vec(1.0f, 1.0f, 1.0f);
 	for (int depth = 0; depth < 200; ++depth) {
 		int id = 0;
-		float t_s, t_m, tnear_m, tfar_m;
+		float t_s, t_m = 1e7f, tnear_m, tfar_m;
 		Vec absorption(1.0f, 1.0f, 1.0f);
 		bool intrsctmd = (t_m = d_homogeneousMedium->intersect(&r, &tnear_m, &tfar_m)) > 0.0f;
 		bool intrscts = intersect(&r, d_spheres, nbSpheres, t_s, id);
@@ -232,7 +232,7 @@ __global__ void rendering_kernel(Vec *d_image, int width, int height, Sphere *d_
 			float e0 = curand_uniform(&state), e1 = curand_uniform(&state), e2 = curand_uniform(&state);
 			const VolumetricProps &volProps = obj->volProps;
 			float s, ms = /*(volProps.sigma_s / volProps.sigma_t) */ scatter(r, sRay, volProps.sigma_s, s, e0, e1, e2);
-			float distToExit = t_s < t_m ? t_s : t_m;
+			float distToExit = t_s < t ? t_s : t;
 			if (s <= distToExit && volProps.sigma_s > 0) { 
 				r = sRay;
 				brdfsProduct = brdfsProduct.mult(volProps.scatteringColor * ms);
@@ -320,8 +320,9 @@ void initEngine() {
 		Sphere(2.0f, Vec(-2.0f, 1.0f, -25.0f), Vec(), Vec(1, 1, 1) * 0.8f, Refl_t(REFR | VOL), VolumetricProps(Vec(1.0, 1.0, 1.0), Vec(0.9f, 0.2f, 0.9f), 4.0f, 0.1f), 1.33f),
 		Sphere(1000.0f, Vec(0.0f, -1001.0f, -25.0f), Vec(), Vec(1, 1, 1) * 0.8f, DIFF),
 	};
+
 	// Define scene's medium
-	Sphere medium(7.0f, Vec(0.0f, 4.0f, -2400.0f), Vec(), Vec(1.0f, 1.0f, 1.0f), Refl_t(VOL | REFR), VolumetricProps(Vec(1.0f, 1.0f, 1.0f), Vec(0.1f, 0.1f, 0.1f), 0.01f, 0.01f), 1.0f);
+	Sphere medium(20.0f, Vec(0.0f, 0.0f, -25000.0f), Vec(), Vec(), VOL, VolumetricProps(Vec(0.8f, 0.8f, 0.8f), Vec(1.0f, 1.0f, 1.0f), 0.08f, 0.001f));
 
 	CHECK_CUDA_ERRORS(cudaMalloc(&d_homogeneousMedium, sizeof(Sphere)));
 	CHECK_CUDA_ERRORS(cudaMemcpy(d_homogeneousMedium, &medium, sizeof(Sphere), cudaMemcpyHostToDevice));
