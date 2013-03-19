@@ -210,7 +210,7 @@ __global__ void rendering_kernel(Vec *d_image, int width, int height, Sphere *d_
 	Ray r(cam.o, d.norm());
 	Vec pathThroughput;
 	Vec brdfsProduct = Vec(1.0f, 1.0f, 1.0f);
-	for (int depth = 0; depth < 50; ++depth) {
+	for (int depth = 0; depth < 200; ++depth) {
 		int id = 0;
 		float t_s, t_m, tnear_m, tfar_m;
 		Vec absorption(1.0f, 1.0f, 1.0f);
