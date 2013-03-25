@@ -45,17 +45,6 @@ inline int toInt(float x) {
 	return int(powf(clamp(x), 1 / 2.2f) * 255.0f + 0.5f); 
 }
 
-inline __host__ __device__
-unsigned int randhash(unsigned int a) {
-	a = (a+0x7ed55d16) + (a<<12);
-	a = (a^0xc761c23c) ^ (a>>19);
-	a = (a+0x165667b1) + (a<<5);
-	a = (a+0xd3a2646c) ^ (a<<9);
-	a = (a+0xfd7046c5) + (a<<3);
-	a = (a^0xb55a4f09) ^ (a>>16);
-	return a;
-}
-
 namespace XORShift { // XOR shift PRNG
 	unsigned int x = 123456789;
 	unsigned int y = 362436069;
@@ -152,9 +141,6 @@ __device__ bool intersect(const Ray *r, const Sphere *d_spheres, int nbSpheres, 
 	return t < inf;
 }
 
-__device__ inline float sampleSegment(float epsilon, float sigma, float smax) {
-	return -logf(1.0 - epsilon * (1.0 - expf(-sigma * smax))) / sigma;
-}
 __device__ inline float sampleSegment(float epsilon, float sigma) {
 	return -logf(1.0f - epsilon) / sigma;
 }
