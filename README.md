@@ -1,7 +1,7 @@
 VPath - Physically Based Volumetric Path Tracer
 =
 
-**VPath** is a CUDA path tracer that fully solves the radiative transfer equation, which makes it capable of rendering complex lighting effects in an unbiased manner. 
+**VPath** is a small CUDA path tracer that fully solves the radiative transfer equation, which makes it capable of rendering complex lighting effects in an unbiased manner. 
 
 Features:
 -
